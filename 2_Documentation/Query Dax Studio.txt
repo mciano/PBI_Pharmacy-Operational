@@ -1,0 +1,214 @@
+DEFINE
+
+// ===============================
+// == Initial Variable Definitions ==
+// ===============================
+VAR __tabelas = INFO.TABLES()               // Tables in the model
+VAR __colunas = INFO.COLUMNS()             // Columns in the model
+VAR __medidas = INFO.MEASURES()            // DAX Measures in the model
+VAR __formatos = INFO.FORMATSTRINGDEFINITIONS()  // Measure formats
+VAR __relacionamentos = INFO.RELATIONSHIPS()     // Relationships between tables
+VAR __gruposCalculos = INFO.CALCULATIONGROUPS()  // Calculation groups
+VAR __itensCalculos = INFO.CALCULATIONITEMS()    // Calculation items within groups
+VAR __dependencias = INFO.CALCDEPENDENCY()       // Calculation dependencies
+VAR __particoes = INFO.PARTITIONS()              // Model partitions
+
+// ===========================
+// == Measures Processing ==
+// ===========================
+VAR __medidasPre =
+ADDCOLUMNS(
+    __medidas,
+    "Tabela",  // Table name associated with the measure
+    VAR __TabelaID = [TableID] RETURN
+        MAXX(FILTER(__tabelas, [ID] = __TabelaID), [Name]),
+
+    "Formato",  // Format of the measure
+    VAR __MedidaID = [ID] RETURN
+        MAXX(FILTER(__formatos, [ObjectID] = __MedidaID), [Expression])
+)
+
+VAR __medidasResultado =
+SELECTCOLUMNS(
+    __medidasPre,
+    "Tabela", [Tabela],
+    "Medida", [Name],
+    "Expressao", [Expression],
+    "Formato", [FormatString],
+    "EstaOculto", [IsHidden],  // Measure visibility
+    "Descricao", [Description],
+    "Tipo",  // Measure data type (e.g., String, Number, etc.)
+    SWITCH([DataType],
+        2, "String",
+        6, "Whole Number",
+        8, "Double",
+        9, "Datetime",
+        10, "Currency",
+        11, "Boolean"
+    ),
+    "Pasta", [DisplayFolder]  // Measure folder
+)
+
+// ==========================
+// == Columns Processing ==
+// ==========================
+VAR __colunasPre =
+ADDCOLUMNS(
+    FILTER(
+        __colunas,
+        NOT CONTAINSSTRING([ExplicitName], "RowNumber")  // Exclude row number columns
+    ),
+    "TabelaNome",  // Table name associated with the column
+    VAR __TabelaID = [TableID] RETURN
+        MAXX(FILTER(__tabelas, [ID] = __TabelaID), [Name])
+)
+
+VAR __colunasResultado =
+SELECTCOLUMNS(
+    __colunasPre,
+    "Tabela", [TabelaNome],
+    "Coluna", COALESCE([ExplicitName], [InferredName]),  // Column name
+    "OrdenadaPor",  // Sorted by column
+    VAR __OrderID = [SortByColumnID] RETURN
+        MAXX(FILTER(__colunasPre, [ID] = __OrderID), [ExplicitName]),
+    "Formato", COALESCE([FormatString], "String"),  // Column format
+    "Pasta", [DisplayFolder],  // Column folder
+    "EstaOculto", [IsHidden],  // Column visibility
+    "Expressao", [Expression]  // Column expression
+)
+
+// ============================
+// == Relationships Processing ==
+// ============================
+VAR __relacionamentosPre =
+ADDCOLUMNS(
+    __relacionamentos,
+    "DeTabela",  // From table
+    VAR __DeTabela = [FromTableID] RETURN
+        MAXX(FILTER(__colunasPre, [TableID] = __DeTabela), [TabelaNome]),
+
+    "ParaTabela",  // To table
+    VAR __ParaTabela = [ToTableID] RETURN
+        MAXX(FILTER(__colunasPre, [TableID] = __ParaTabela), [TabelaNome]),
+
+    "DeColuna",  // From column
+    VAR __DeColuna = [FromColumnID] RETURN
+        MAXX(FILTER(__colunasPre, [ID] = __DeColuna), COALESCE([ExplicitName], [InferredName])),
+
+    "ParaColuna",  // To column
+    VAR __ParaColuna = [ToColumnID] RETURN
+        MAXX(FILTER(__colunasPre, [ID] = __ParaColuna), COALESCE([ExplicitName], [InferredName]))
+)
+
+VAR __relacionamentosResultado =
+SELECTCOLUMNS(
+    __relacionamentosPre,
+    "ID", [ID],
+    "DeTabela", [DeTabela],
+    "DeColuna", [DeColuna],
+    "DeCardinalidade", IF([FromCardinality] = 2, "*", [FromCardinality]),  // From cardinality
+    "De", "'" & [DeTabela] & "'" & "[" & [DeColuna] & "]",  // From reference
+    "ParaTabela", [ParaTabela],
+    "ParaColuna", [ParaColuna],
+    "ParaCardinalidade", IF([ToCardinality] = 2, "*", [ToCardinality]),  // To cardinality
+    "Para", "'" & [ParaTabela] & "'" & "[" & [ParaColuna] & "]",  // To reference
+    "EstaAtivo", [IsActive],  // Active/inactive status
+    "Sentido", IF([CrossFilteringBehavior] = 2, "Both", "Single"),  // Filter direction
+    "DePara",  // Full relationship representation
+    VAR __De = "'" & [DeTabela] & "'" & "[" & [DeColuna] & "]"
+    VAR __Para = "'" & [ParaTabela] & "'" & "[" & [ParaColuna] & "]"
+    VAR __DeCardinalidade = IF([FromCardinality] = 2, "*", [FromCardinality])
+    VAR __ParaCardinalidade = IF([ToCardinality] = 2, "*", [ToCardinality])
+    VAR __Flecha = IF([CrossFilteringBehavior] = 2, "<->", "<-")
+    RETURN __De & " " & __DeCardinalidade & " " & __Flecha & " " & __ParaCardinalidade & " " & __Para
+)
+
+// ==============================
+// == Calculation Groups Processing ==
+// ==============================
+VAR __itensCalculosPre =
+ADDCOLUMNS(
+    ADDCOLUMNS(
+        __itensCalculos,
+        "TabelaID",  // Table associated with calculation group
+        VAR __GrupoCalculo_ID = [CalculationGroupID] RETURN
+            MAXX(FILTER(__gruposCalculos, [ID] = __GrupoCalculo_ID), [TableID]),
+
+        "Precedencia",  // Group precedence
+        VAR __GrupoCalculo_ID = [CalculationGroupID] RETURN
+            MAXX(FILTER(__gruposCalculos, [ID] = __GrupoCalculo_ID), [Precedence])
+    ),
+    "GrupoCalculo",  // Calculation group name
+    VAR __Tabela_ID = [TabelaID] RETURN
+        MAXX(FILTER(__tabelas, [ID] = __Tabela_ID), [Name]),
+
+    "Formato",  // Format associated with the group
+    VAR __Formato_ID = [FormatStringDefinitionID] RETURN
+        MAXX(FILTER(__formatos, [ID] = __Formato_ID), [Expression]),
+
+    "ColunaGrupoCalculo",  // Column used in the group
+    VAR __Tabela_ID = [TabelaID]
+    VAR __Coluna_ID = MINX(FILTER(__colunas, [TableID] = __Tabela_ID), [ID])
+    RETURN MAXX(FILTER(__colunas, [ID] = __Coluna_ID), COALESCE([ExplicitName], [InferredName])),
+
+    "ColunaOrdinal",  // Ordinal column in the group
+    VAR __Tabela_ID = [TabelaID]
+    VAR __Coluna_ID = MAXX(FILTER(__colunas, [TableID] = __Tabela_ID), [ID])
+    RETURN MAXX(FILTER(__colunas, [ID] = __Coluna_ID), COALESCE([ExplicitName], [InferredName]))
+)
+
+VAR __gruposCalculosResultado =
+SELECTCOLUMNS(
+    __itensCalculosPre,
+    "GrupoCalculo", [GrupoCalculo],
+    "Precedencia", [Precedencia],
+    "ItemCalculo", [Name],
+    "Expressao", [Expression],
+    "Formato", [Formato],
+    "Ordinal", [Ordinal],
+    "ColunaGrupoCalculo", [ColunaGrupoCalculo],
+    "ColunaOrdinal", [ColunaOrdinal]
+)
+
+// =====================
+// == Parameters Processing ==
+// =====================
+VAR __parametrosResultado =
+SELECTCOLUMNS(
+    SUMMARIZE(
+        FILTER(
+            __dependencias,
+            [REFERENCED_OBJECT_TYPE] = "M_EXPRESSION" &&
+            CONTAINSSTRING([REFERENCED_EXPRESSION], "IsParameterQuery")
+        ),
+        [REFERENCED_OBJECT],
+        [REFERENCED_EXPRESSION]
+    ),
+    "Nome", [REFERENCED_OBJECT],
+    "Expressao", [REFERENCED_EXPRESSION]
+)
+
+// ==========================
+// == Partitions Processing ==
+// ==========================
+VAR __particoesResultado =
+SELECTCOLUMNS(
+    __particoes,
+    "TabelaID", [TableID],
+    "TabelaNome", [Name],
+    "Descricao", [Description],
+    "Codigo", [QueryDefinition],
+    "ModificadoEm", [ModifiedTime],
+    "AtualizadoEm", [RefreshedTime],
+    "Tipo", SWITCH([Type], 4, "M", 2, "DAX", 7, "Internal")
+)
+
+// ==============================
+// == Final Results Output ==
+// ==============================
+EVALUATE __medidasResultado ORDER BY [Tabela] ASC, [Medida] ASC
+EVALUATE __colunasResultado ORDER BY [Tabela] ASC, [Coluna] ASC
+EVALUATE __relacionamentosResultado ORDER BY [DePara] ASC
+EVALUATE __gruposCalculosResultado ORDER BY [Precedencia] ASC, [Ordinal] ASC
+EVALUATE __parametrosResultado
+EVALUATE __particoesResultado ORDER BY [TabelaID] ASC
